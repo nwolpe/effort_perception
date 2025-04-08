@@ -110,7 +110,7 @@ for (pid in participants) {
   if (nrow(df) < 5) next  # skip if too few trials
   
   # Subset relevant variables
-  df_sub <- df %>% select(all_of(vars))
+  df_sub <- df %>% dplyr::select(all_of(vars))
   
   
   r <- cor(df_sub, use = "pairwise.complete.obs")
@@ -124,8 +124,6 @@ for (i in seq_along(cor_list)) {
   cor_array[, , i] <- cor_list[[i]]
 }
 mean_cor <- apply(cor_array, c(1, 2), mean, na.rm = TRUE)
-
-
 
 #  now plot
 library(ggplot2)
@@ -262,9 +260,17 @@ library(dplyr)
 library(tidyr)
 library(ggplot2)
 library(cowplot)
-# Drop Participant column, reshape to long format
-coef_long <- coef_df %>%
-  pivot_longer(-Participant, names_to = "Predictor", values_to = "Beta")
+
+# Prepare coef_long to match summary_df
+coef_long <- coef_long %>%
+  mutate(
+    Predictor = ifelse(Predictor == "SuccessYes", "Success_bin", Predictor)
+  ) %>%
+  filter(Predictor != "HandNon_Dominant") %>%
+  mutate(
+    Predictor = factor(Predictor, levels = plot_order, labels = new_labels)
+  )
+
 
 summary_df <- coef_long %>%
   group_by(Predictor) %>%
@@ -275,16 +281,7 @@ summary_df <- coef_long %>%
     upper = mean_beta + 1.96 * se
   )
 
-summary_df$Predictor[summary_df$Predictor == "SuccessYes"] <- "Success_bin"
 
-summary_df <- summary_df %>%
-  filter(Predictor != "HandNon_Dominant")
-
-# Ensure consistent order and rename predictors
-summary_df <- summary_df %>%
-  mutate(
-    Predictor = factor(Predictor, levels = plot_order, labels = new_labels)
-  )
 
 fig3b<-ggplot(summary_df, aes(x = Predictor, y = mean_beta)) +
   geom_bar(stat = "identity", fill = "steelblue") +
@@ -306,72 +303,5 @@ print(fig3_combined)
 
 ggsave(filename = "~/Documents/effort_function/Fig3.jpg",
        plot = fig3_combined, dpi = 300, width = 13, height = 6)
-
-
-
-###### exploring correlations with PHQ9 and AES #########
-
-library(dplyr)
-
-# Assuming AES and PHQ are in your original data frame
-# Create a data frame with AES and PHQ scores for each participant
-score_data <- data %>%
-  dplyr::select(Participant, AES, PHQ9)
-
-# Now, bind the betas (from your previous results) with these scores
-betas_df <- do.call(rbind, lapply(names(results), function(pid) {
-  out <- results[[pid]]
-  if (is.null(out)) return(NULL)
-  data.frame(Participant = pid, t(out))
-}))
-
-# Merge the betas with AES and PHQ scores by Participant
-cor_data <- left_join(betas_df, score_data, by = "Participant")
-
-# Select only AES, PHQ, and the betas (removing the Participant column)
-cor_data_no_participant <- cor_data %>% 
-  dplyr::select(-Participant) 
-
-# Compute correlation matrix
-cor_matrix <- cor(cor_data_no_participant, use = "pairwise.complete.obs")
-
-# Select the relevant correlations (AES with betas, PHQ with betas)
-cor_matrix_filtered <- cor_matrix[c("AES", "PHQ9"), colnames(cor_matrix) != "AES" & colnames(cor_matrix) != "PHQ9"]
-
-# Convert the correlation matrix to a long format for ggplot
-cor_plot_data <- as.data.frame(as.table(cor_matrix_filtered))
-colnames(cor_plot_data) <- c("Row", "Column", "Correlation")
-
-cor_plot_data <- cor_plot_data %>%
-  filter(Column != "HandNon_Dominant")
-
-cor_plot_data$Column <- as.character(cor_plot_data$Column)
-cor_plot_data$Column[cor_plot_data$Column == "SuccessYes"] <- "Success_bin"
-cor_plot_data$Column <- factor(cor_plot_data$Column)
-
-
-# Ensure consistent order and rename predictors
-cor_plot_data <- cor_plot_data %>%
-  mutate(
-    Column = factor(Column, levels = plot_order, labels = new_labels)
-  )
-
-
-# Plot the correlation matrix
-fig4<-ggplot(cor_plot_data, aes(x = Row, y = Column, fill = Correlation)) +
-  geom_tile(color = "white") +
-  geom_text(aes(label = sprintf("%.3f", Correlation)), size = 5) +
-  scale_fill_gradient2(low = "blue", mid = "white", high = "red", midpoint = 0) +
-  theme_minimal() +
-  labs(fill = "r coefficient") +
-  theme(
-    axis.text.x = element_text(angle = 45, hjust = 1),
-    axis.title = element_blank(),
-    panel.grid = element_blank()
-  )
-
-fig4
-ggsave(filename = "~/Documents/effort_function/Fig4.jpg",
-       plot = fig4, dpi = 300, width = 6, height = 7.5)
 
 
