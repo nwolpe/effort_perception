@@ -2,7 +2,7 @@
 clear
 addpath ~/Documents/MatlabScipts/
 data = readtable('~/Documents/effort_function/features_data_29.01.25_2.csv');
-
+demog = readtable('~/Documents/effort_function/deomg_effort_function.csv');
 data_mvc = readtable('~/Documents/effort_function/mvc_ratios.csv');
 
 % Create a logical index for values below the 75th percentile
@@ -18,20 +18,23 @@ subID = unique(data.Participant);
 corr_coeff = nan(length(subID),1);
 success_rate = nan(length(subID),1);
 mvc_ratio= nan(length(subID),1);
-
+sum_auc_corr = nan(length(subID),1);
 for iSub = 1:length(subID)
     % Get the data for the current participant
     ind2include = strncmp(data.Participant, subID(iSub), 4);
-    
+    foo = data.Sum_AUC(ind2include);
+    sum_auc = [foo(1); diff(foo)];
+    sum_auc_corr(iSub) = corr(sum_auc, data.Target_Force(ind2include));
     corr_coeff(iSub) = corr(data.Target_Force(ind2include), data.Subjective_Effort(ind2include), 'type', 'Spearman');
     success_rate(iSub) = sum(strncmp(data.Success(ind2include),'Yes',3)) / length(data.Success(ind2include));
     mvc_ratio(iSub) = unique(data.mvc_ratio(ind2include));
 end
 
 sub2exclude = isoutlier(corr_coeff, "mean", "ThresholdFactor", 2.5) | isoutlier(success_rate,"mean","ThresholdFactor", 2.5) | success_rate==1;
-
+mvc_ratio(sub2exclude) = [];
 ind2exclude = ismember(data.Participant, subID(sub2exclude));
 data(ind2exclude,:) = [];
+
 
 % save as csv
 % writetable(data, '~/Documents/effort_function/effort_function_data_filtered.csv')
@@ -41,6 +44,13 @@ clearvars subID
 data.Participant_num = numeric_ids;
 
 
+[~, incl_data, incl_demog] = intersect(subID, demog.Participant_sCode);
+
+% sum(strncmp(subID(incl_data),demog.Participant_sCode(incl_demog),5))
+handedness = demog.DominantHand(incl_demog);
+age = demog.Age(incl_demog);
+sex = demog.Gender(incl_demog);
+sex = strncmp(sex, 'F',1);
 
 %% compare different functions
 
@@ -117,8 +127,15 @@ for iSub = 1:length(subID)
     PHQ(iSub) = nanmean(data.PHQ9(ind2include));
     
     effort_rating = data.Subjective_Effort(ind2include);
+
+%     foo = data.Sum_AUC(ind2include);
+%     force_auc = [foo(1); diff(foo)];
     
 %     x = [zscore(data.Target_Force(ind2include).^2), data.feedback(ind2include)==1];
+    
+
+%     x = [zscore(force_auc), data.feedback(ind2include)==1, ...
+%         strncmp(data.Hand(ind2include), 'Dominant', 8)];
     
     x = [zscore(data.Target_Force(ind2include).^2), data.feedback(ind2include)==1, ...
         strncmp(data.Hand(ind2include), 'Dominant', 8)];
@@ -146,16 +163,62 @@ end
 
 % remove participants with 0% success! and 100% success
 % sub2exclude = success_rate==1 | success_rate==0;
-corrtype = 'Pearson';
-[r p1] = corr(AES, b, 'rows', 'Complete', 'type', corrtype)
-[r p2] = corr(PHQ(PHQ<15), b(PHQ<15,:), 'rows', 'Complete', 'type', corrtype)
-
+% corrtype = 'Pearson';
+% [r p1] = corr(AES, b, 'rows', 'Complete', 'type', corrtype)
+% [r p2] = corr(PHQ, b, 'rows', 'Complete', 'type', corrtype)
 
 % Combine p-values into a single vector
-all_p = [p1(2:3), p2(2:3)];
+% all_p = [p1(2:3), p2(2:3)];
 
 % FDR correction
-adj_p = mafdr(all_p, 'BHFDR', true)
+% adj_p = mafdr(all_p, 'BHFDR', true);
 
 % writetable(table(PHQ, b), '~/Documents/effort_function/forFigure.csv')
 
+
+% added instead of Pearson correlations based on Reviewer 2's comments:
+tbl = table(nanzscore(AES), nanzscore(PHQ), nanzscore(b(:,2)), ...
+    nanzscore(-b(:,3)), nanzscore(mvc_ratio), sex, nanzscore(age), 'VariableNames', {'AES', 'PHQ',...
+    'effort_sens', 'reward_sens', 'mvc_ratio', 'sex', 'age'});
+mdl = fitlm(tbl, 'effort_sens ~ AES + PHQ + mvc_ratio + sex + age');
+disp(mdl)
+
+p_effort_AES = mdl.Coefficients.pValue('AES');
+p_effort_PHQ = mdl.Coefficients.pValue('PHQ');
+
+
+mdl = fitlm(tbl, 'reward_sens ~ AES + PHQ + mvc_ratio + sex + age');
+disp(mdl)
+p_reward_AES = mdl.Coefficients.pValue('AES');
+p_reward_PHQ = mdl.Coefficients.pValue('PHQ');
+
+% FDR correction
+all_p = [p_effort_AES; p_effort_PHQ; p_reward_AES; p_reward_PHQ];
+
+% FDR correction (Benjamini-Hochberg)
+[~, ~, ~, adj_p] = fdr_bh(all_p); % this is a custom function, see below
+
+
+%% save rating data according to PHQ bands
+
+sum(PHQ <= 5)
+sum(PHQ > 5)
+sum(PHQ >= 12)
+% Define PHQ bands
+
+phq_band = strings(size(PHQ));
+phq_band(PHQ <= 4) = "Low";
+phq_band(PHQ > 4) = "High";
+
+% sum(strncmp(phq_band, "Low",3))
+% sum(strncmp(phq_band, "High",4))
+
+% phq_band(PHQ > 5 & PHQ <= 11) = "5-9";
+% phq_band(PHQ >= 12) = "10+";
+
+% Store trial-level data for plotting
+plot_table = table(data.Participant_num, data.Target_Force, data.Subjective_Effort, ...
+    data.feedback, data.PHQ9, phq_band(numeric_ids), data.Success,...
+    'VariableNames', {'Participant', 'Target_Force', 'Effort_Rating', 'Feedback', 'PHQ9', 'PHQ_Band', 'Outcome'});
+
+writetable(plot_table, '~/Documents/effort_function/effort_plot_data.csv');
